@@ -13,15 +13,62 @@ contract SwapAppTest is Test{
     address user = 0xfAf87e196A29969094bE35DfB0Ab9d0b8518dB84; //address with usdt in arbitrum mainnet
     address USDT = 0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9; //USDT address in arbitrum mainnet
     address DAI = 0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1; //DAI address in arbitrum mainnet
+    address feeReceiver = vm.addr(3);
 
     function setUp() public{
-        app = new SwapApp(uniswapV2SwapRouterAddress);
+        app = new SwapApp(uniswapV2SwapRouterAddress, feeReceiver);
 
     }
 
     function testHasBeenDeployedCorrectly() public{
         assert(app.V2Router02Address() == uniswapV2SwapRouterAddress);
     }
+
+
+    //Swap Tokens (without fee)
+    function testShouldRevertIfPathLengthInsuficient() public{
+        //Set parameters
+        vm.startPrank(user);
+        uint256 amountIn = 5 * 1e6; //5000000
+        uint256 amountOutMin = 4 * 1e18;
+        uint256 deadline = 1738499328 + 1000000000;
+        address[] memory path = new address[](1);
+        path[0]= USDT;
+
+        //Approve the contract to spend usdt
+        IERC20(USDT).approve(address(app), amountIn);
+
+        //Save initial balance
+        uint256 usdtBalanceBefore = IERC20(USDT).balanceOf(user);
+
+        //Expect Revert
+        vm.expectRevert("Invalid path length");
+        app.swapTokens(amountIn, amountOutMin, path, deadline);
+
+        vm.stopPrank();
+    }
+
+    function testShouldRevertIfNotEnoughTokensApproved() public{
+        vm.startPrank(user);
+        uint256 amountIn = 5 * 1e6; //5000000
+        uint256 amountOutMin = 4 * 1e18;
+        uint256 deadline = 1738499328 + 1000000000;
+        address[] memory path = new address[](2);
+        path[0]= USDT;
+        path[1]= DAI;
+        IERC20(USDT).approve(address(app), amountIn -1);
+
+        uint256 usdtBalanceBefore = IERC20(USDT).balanceOf(user);
+        uint256 daiBalanceBefore = IERC20(DAI).balanceOf(user);
+
+        vm.expectRevert("ERC20: transfer amount exceeds allowance");
+
+        app.swapTokens(amountIn, amountOutMin, path, deadline);
+        vm.stopPrank();
+    }
+
+
+
 
     function testSwapTokensCorrectly() public{
         vm.startPrank(user);
@@ -45,9 +92,275 @@ contract SwapAppTest is Test{
 
 
         vm.stopPrank();
+    }
+
+    //Add Liquidity
+    function testLiquidityShouldRevertIfTokensAreTheSame() public{
+        vm.startPrank(user);
+        address tokenA = USDT;
+        address tokenB = USDT;
+        uint256 amountADesired = 5 * 1e6;
+        uint256 amountBDesired = 5 * 1e6;
+        uint256 amountAMin = 4* 1e6;
+        uint256 amountBMin = 4* 1e6;
+        uint256 deadline = 1738499328 + 1000000000;
+
+        IERC20(USDT).approve(address(app), amountADesired);
+
+    // Guardar balances iniciales (opcional, para verificar que no cambian)
+    uint256 usdtBalanceBefore = IERC20(USDT).balanceOf(user);
+
+    // Esperar que revierte porque los tokens son iguales
+    vm.expectRevert("Tokens must be different");
+    app.addLiquidityToPool(tokenA, tokenB, amountADesired, amountBDesired, amountAMin, amountBMin, deadline);
 
 
+    vm.stopPrank();
+    }
+
+    function testShouldRevertIfDeadlineAlreadyExpired() public{
+        vm.startPrank(user);
+        address tokenA = USDT;
+        address tokenB = DAI;
+        uint256 amountADesired = 5 * 1e6;
+        uint256 amountBDesired = 5 * 1e18;
+        uint256 amountAMin = 4 * 1e6;
+        uint256 amountBMin = 4 * 1e18;
+        uint256 deadline = block.timestamp - 24 hours; // Deadline in the past
+
+        IERC20(USDT).approve(address(app), amountADesired);
+        IERC20(DAI).approve(address(app), amountBDesired);
+
+        // Guardar balances iniciales (opcional, para verificar que no cambian)
+        uint256 usdtBalanceBefore = IERC20(USDT).balanceOf(user);
+        uint256 daiBalanceBefore = IERC20(DAI).balanceOf(user);
+
+        vm.expectRevert("Deadline has expired");
+        app.addLiquidityToPool(tokenA, tokenB, amountADesired, amountBDesired, amountAMin, amountBMin, deadline);
+
+        vm.stopPrank();
 
     }
 
+    function testShouldRevertIfAmountDesiredIsZero() public{
+        vm.startPrank(user);
+        address tokenA = USDT;
+        address tokenB = DAI;
+        uint256 amountADesired = 5 * 1e6;
+        uint256 amountBDesired = 0;
+        uint256 amountAMin = 4* 1e6;
+        uint256 amountBMin = 4* 1e18;
+        uint256 deadline = block.timestamp + 24 hours; // Deadline in the future
+
+        IERC20(USDT).approve(address(app), amountADesired);
+        IERC20(DAI).approve(address(app), amountBDesired);
+
+        // Guardar balances iniciales (opcional, para verificar que no cambian)
+        uint256 usdtBalanceBefore = IERC20(USDT).balanceOf(user);
+        uint256 daiBalanceBefore = IERC20(DAI).balanceOf(user);
+
+        vm.expectRevert("Amounts must be greater than zero");
+        app.addLiquidityToPool(tokenA, tokenB, amountADesired, amountBDesired, amountAMin, amountBMin, deadline);
+
+
+
+        vm.stopPrank();
+
+    }
+
+    function testShouldRevertIfAmountMinsExceedDesired() public{
+        vm.startPrank(user);
+        address tokenA = USDT;
+        address tokenB = DAI;
+        uint256 amountADesired = 5 * 1e6;
+        uint256 amountBDesired = 5 * 1e18;
+        uint256 amountAMin = 6* 1e6;
+        uint256 amountBMin = 6* 1e18;
+        uint256 deadline = block.timestamp + 24 hours; // Deadline in the future
+
+        IERC20(USDT).approve(address(app), amountADesired);
+        IERC20(DAI).approve(address(app), amountBDesired);
+
+        // Guardar balances iniciales (opcional, para verificar que no cambian)
+        uint256 usdtBalanceBefore = IERC20(USDT).balanceOf(user);
+        uint256 daiBalanceBefore = IERC20(DAI).balanceOf(user);
+
+        vm.expectRevert("Minimum amounts exceed desired amounts");
+        app.addLiquidityToPool(tokenA, tokenB, amountADesired, amountBDesired, amountAMin, amountBMin, deadline);
+
+
+
+        vm.stopPrank();
+    }
+
+    function testAddLiquidityCorrectly() public {
+        vm.startPrank(user); // Simula que el usuario ejecuta la transacción
+
+        // Configurar parámetros
+        address tokenA = USDT; // USDT (6 decimales)
+        address tokenB = DAI;  // DAI (18 decimales)
+        uint256 amountADesired = 5 * 1e6;  // 5 USDT
+        uint256 amountBDesired = 5 * 1e18; // 5 DAI
+        uint256 amountAMin = 4 * 1e6;     // 4 USDT (menor o igual a amountADesired)
+        uint256 amountBMin = 4 * 1e18;    // 4 DAI (menor o igual a amountBDesired)
+        uint256 deadline = block.timestamp + 24 hours; // Deadline en el futuro
+
+        // Aprobar al contrato para gastar ambos tokens
+        IERC20(tokenA).approve(address(app), amountADesired);
+        IERC20(tokenB).approve(address(app), amountBDesired);
+
+        // Guardar balances iniciales
+        uint256 usdtBalanceBefore = IERC20(tokenA).balanceOf(user);
+        uint256 daiBalanceBefore = IERC20(tokenB).balanceOf(user);
+
+        // Ejecutar la función y esperar el evento
+        vm.expectEmit(true, true, false, false);
+        (uint256 amountA, uint256 amountB, uint256 liquidity) = app.addLiquidityToPool(tokenA, tokenB, amountADesired, amountBDesired, amountAMin, amountBMin, deadline);
+
+        // Verificar balances después
+        uint256 usdtBalanceAfter = IERC20(tokenA).balanceOf(user);
+        uint256 daiBalanceAfter = IERC20(tokenB).balanceOf(user);
+
+        // Verificar que se usaron tokens y se devolvió el exceso (si aplica)
+        assert(usdtBalanceBefore - usdtBalanceAfter == amountADesired - (amountADesired > amountA ? amountADesired - amountA : 0));
+        assert(daiBalanceBefore - daiBalanceAfter == amountBDesired - (amountBDesired > amountB ? amountBDesired - amountB : 0));
+
+        // Verificar que se recibió liquidez
+        assertGt(liquidity, 0, "No liquidity tokens received");
+
+        vm.stopPrank();
+    }
+
+    //Remove Liquidity
+
+    function testShouldRevertIfAddressZero() public{
+        vm.startPrank(user);
+        address tokenA = address(0);
+        address tokenB = DAI; //Set tokenB to address(0) to try the other option for this test
+        uint256 liquidity= 10;
+        uint256 amountAMin = 5 * 1e6;
+        uint256 amountBMin = 5 * 1e18;
+        uint256 deadline = block.timestamp + 48 hours;
+
+        vm.expectRevert("Invalid token addresses");
+        app.removeLiquidityFromPool(tokenA, tokenB, liquidity, amountAMin, amountBMin, deadline);
+
+        vm.stopPrank();
+
+    
+    }
+
+    function testShouldRevertIfLiquidityIsZero() public{
+        vm.startPrank(user);
+        address tokenA = USDT;
+        address tokenB = DAI; 
+        uint256 liquidity= 0;
+        uint256 amountAMin = 5 * 1e6;
+        uint256 amountBMin = 5 * 1e18;
+        uint256 deadline = block.timestamp + 48 hours;
+
+        vm.expectRevert("Liquidity must be greater than zero");
+        app.removeLiquidityFromPool(tokenA, tokenB, liquidity, amountAMin, amountBMin, deadline);
+
+        vm.stopPrank();
+
+    }
+
+    function testRemoveLiquidityCorrectly() public{
+        vm.startPrank(user);
+        address tokenA = USDT;
+        address tokenB = DAI; 
+        uint256 liquidity= 10;
+        uint256 amountAMin = 5 * 1e6;
+        uint256 amountBMin = 5 * 1e18;
+        uint256 deadline = block.timestamp + 48 hours;
+
+        address pair = app.getPair(tokenA, tokenB);
+
+        deal(pair, user, liquidity); 
+        vm.prank(user);
+        IERC20(pair).approve(address(app), liquidity);
+
+        uint256 usdtBalanceBefore = IERC20(tokenA).balanceOf(user);
+        uint256 daiBalanceBefore = IERC20(tokenB).balanceOf(user);
+        uint256 liquidityBalanceBefore = IERC20(pair).balanceOf(user);
+
+        app.removeLiquidityFromPool(tokenA, tokenB, liquidity, amountAMin, amountBMin, deadline);
+
+        uint256 usdtBalanceAfter = IERC20(tokenA).balanceOf(user);
+        uint256 daiBalanceAfter = IERC20(tokenB).balanceOf(user);
+        uint256 liquidityBalanceAfter = IERC20(pair).balanceOf(user);
+
+        assert(usdtBalanceAfter > usdtBalanceBefore); // Recibió USDT
+        assert(daiBalanceAfter > daiBalanceBefore);   // Recibió DAI
+        assert(liquidityBalanceBefore - liquidityBalanceAfter == liquidity); // Perdió liquidez
+
+        // Verificar que se respetaron los mínimos
+        assert(usdtBalanceAfter - usdtBalanceBefore >= amountAMin); // Mínimo de USDT respetado
+        assert(daiBalanceAfter - daiBalanceBefore >= amountBMin);   // Mínimo de DAI respetado
+
+        vm.stopPrank();
+    }
+
+    //Swapp Tokens with Fee
+
+    function testShouldRevertWithInsuficientPathFee() public{
+        //Set parameters
+        vm.startPrank(user);
+        uint256 amountIn = 5 * 1e6; //5000000
+        uint256 amountOutMin = 4 * 1e18;
+        uint256 deadline = 1738499328 + 1000000000;
+        address[] memory path = new address[](1);
+        path[0]= USDT;
+        uint256 feePercent = 200;
+
+        //Approve the contract to spend usdt
+        IERC20(USDT).approve(address(app), amountIn);
+
+        //Save initial balance
+        uint256 usdtBalanceBefore = IERC20(USDT).balanceOf(user);
+
+        //Expect Revert
+        vm.expectRevert("Invalid path length");
+        app.swapTokensWithFee(amountIn, amountOutMin, path, deadline, feePercent);
+
+        vm.stopPrank();
+    }
+
+    function testSwapTokensWithFeeCorrectly() public{
+        vm.startPrank(user);
+        uint256 amountIn = 5 * 1e6; //5000000
+        uint256 amountOutMin = 4 * 1e18;
+        uint256 deadline = 1738499328 + 1000000000;
+        address[] memory path = new address[](2);
+        path[0]= USDT;
+        path[1]= DAI;
+        uint256 feePercent = 200;
+
+        deal(USDT, user, amountIn);
+
+        IERC20(USDT).approve(address(app), amountIn);
+
+
+        uint256 usdtBalanceBefore = IERC20(USDT).balanceOf(user);
+        uint256 daiBalanceBefore = IERC20(DAI).balanceOf(user);
+        uint256 feeReceiverBalanceBefore = IERC20(USDT).balanceOf(feeReceiver);
+
+        app.swapTokensWithFee(amountIn, amountOutMin, path, deadline, feePercent);
+
+        uint256 usdtBalanceAfter = IERC20(USDT).balanceOf(user);
+        uint256 daiBalanceAfter = IERC20(DAI).balanceOf(user);
+        uint256 feeReceiverBalanceAfter = IERC20(USDT).balanceOf(feeReceiver);
+
+        assert(usdtBalanceAfter == usdtBalanceBefore - amountIn);
+        assert(daiBalanceAfter > daiBalanceBefore);
+        assert(daiBalanceAfter - daiBalanceBefore >= amountOutMin); // Respeta el mínimo
+        assert(feeReceiverBalanceAfter - feeReceiverBalanceBefore == (feePercent * amountIn / 10000)); // Fee transferida
+
+
+
+        vm.stopPrank();
+    }
+
 }
+
